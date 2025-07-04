@@ -10,19 +10,22 @@ using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
-//Habilitar los CORS
+// CORS para local y Vercel
 builder.Services.AddCors(options =>
 {
-    options.AddDefaultPolicy(
-        builder =>
-        {
-            builder.WithOrigins("http://localhost:5173")
-                .AllowAnyHeader()//Permitir cualquier header
-                .AllowAnyMethod();//Permitir cualquier metodo
-        });
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins(
+            "http://localhost:5173",
+            "https://antivirus-front.vercel.app",
+            "https://antivirus-frontang-git-amazo-diegogiraldozs-projects.vercel.app"
+        )
+        .AllowAnyHeader()
+        .AllowAnyMethod();
+    });
 });
 
-// Configurar Autenticación con JWT
+// JWT Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -31,69 +34,59 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"])), // Usa una clave segura desde appsettings.json
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"])),
             ValidateIssuer = false,
             ValidateAudience = false
         };
     });
 
-// Agregar autorización
 builder.Services.AddAuthorization();
-
-// Agregar controladores y vistas
 builder.Services.AddControllersWithViews();
-
-// Configuración de Swagger
 builder.Services.ConfigureSwagger();
-
-// Configuración de servicios personalizados
 builder.Services.ConfigureServices(builder.Configuration);
-
-// AutoMapper para mapeo de objetos
 builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies());
 
-// Inyección de dependencias de servicios
+// Dependencias
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<ICategoryService, CategoryService>();
 builder.Services.AddScoped<IOpportunityService, OpportunityService>();
-builder.Services.AddScoped<IInstitutionService, InstitutionService>(); // Se conserva también
+builder.Services.AddScoped<IInstitutionService, InstitutionService>();
 builder.Services.AddScoped<IOpportunityInstitutionService, OpportunityInstitutionService>();
 builder.Services.AddScoped<IDonationRepository, DonationRepository>();
-
-// Configuración de la conexión a PostgreSQL desde appsettings.json (Buena práctica)
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
-
-// Inyección de dependencias para los repositorios
 builder.Services.AddScoped<ICategoryRepository, CategoryRepository>();
 builder.Services.AddScoped<IOpportunityRepository, OpportunityRepository>();
 
-// Configurar el puerto 8080 para Google Cloud Run
-builder.WebHost.UseUrls($"http://0.0.0.0:{Environment.GetEnvironmentVariable("PORT") ?? "8080"}");
+// PostgreSQL
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// Escucha en puerto 5000 por defecto en Beanstalk
+builder.WebHost.UseUrls("http://*:5000");
 
 var app = builder.Build();
 
 app.UseCors();
 
-// Configuración de Swagger UI
 app.UseSwagger();
 app.UseSwaggerUI(c =>
 {
     c.SwaggerEndpoint("/swagger/v1/swagger.json", "Antivirus V1");
 });
 
-//Pagina de inicio con swagger
-app.Use(async (context, next) =>
+// Solo en desarrollo redirigir a /swagger
+if (app.Environment.IsDevelopment())
 {
-    if (context.Request.Path.Value == "/")
+    app.Use(async (context, next) =>
     {
-        context.Response.Redirect("/swagger");
-    }
-    await next();
+        if (context.Request.Path == "/")
+        {
+            context.Response.Redirect("/swagger");
+            return;
+        }
+        await next();
+    });
+}
 
-});
-
-// Configuración del pipeline HTTP
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Home/Error");
@@ -102,12 +95,11 @@ if (!app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseRouting();
+app.UseAuthentication(); // ¡No olvides esto!
 app.UseAuthorization();
 
-// Configuración de archivos estáticos (si aplica)
 app.MapStaticAssets();
 
-// Configuración de rutas
 app.MapControllerRoute(
     name: "default",
     pattern: "{controller=Home}/{action=Index}/{id?}")
